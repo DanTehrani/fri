@@ -232,6 +232,7 @@ mod tests {
         }
 
         fn hash(&self, inputs: Vec<Fp>) -> Fp {
+            // TODO: Use the actual Poseidon hash!
             inputs[0] + inputs[1] + Fp::one()
         }
     }
