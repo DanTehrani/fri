@@ -6,11 +6,6 @@ use crate::utils::sample_indices;
 use merlin::Transcript;
 use pasta_curves::{arithmetic::FieldExt, group::ff::PrimeField};
 
-pub struct ProofStream<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> {
-    trees: Vec<MerkleTree<F, H>>,
-    codewords: Vec<Vec<F>>,
-}
-
 pub struct FRIProver<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> {
     domain: Vec<F>,
     domain_length: usize,
