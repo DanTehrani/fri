@@ -10,6 +10,8 @@ use tree::MerkleProof;
 
 pub use fri_prover::FriProver;
 pub use fri_verifier::FriVerifier;
+pub use merlin::Transcript;
+pub use unipoly::UniPoly;
 
 #[derive(Debug)]
 pub struct LayerProof<F>

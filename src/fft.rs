@@ -122,11 +122,9 @@ mod tests {
         }
 
         let evals = fft(&coeffs, &domain);
-        println!("Evals: {:?}", evals);
         assert!(evals == expected_evals);
 
         let recovered_coeffs = ifft(&domain, &evals);
-        println!("Recovered Coeffs: {:?}", recovered_coeffs);
         assert!(recovered_coeffs == coeffs);
     }
 }

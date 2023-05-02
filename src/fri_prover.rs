@@ -90,10 +90,10 @@ where
         let mut trees = vec![];
 
         for i in 0..self.num_rounds() {
-            let current_codeword = codewords[i].clone();
+            let current_codeword = &codewords[i];
 
             let mut tree = MerkleTree::new();
-            let root = tree.commit(&current_codeword);
+            let root = tree.commit(current_codeword);
 
             transcript.append_message(b"root", &root.to_repr());
             trees.push(tree);
@@ -102,7 +102,7 @@ where
             transcript.challenge_bytes(b"alpha", &mut alpha);
             let alpha = F::from_bytes_wide(&alpha);
 
-            let next_codeword = self.fold(&current_codeword, &domain, alpha);
+            let next_codeword = self.fold(current_codeword, &domain, alpha);
             let mut domain_unique = vec![];
             domain.iter().map(|x| x.square()).for_each(|x| {
                 if !domain_unique.contains(&x) {

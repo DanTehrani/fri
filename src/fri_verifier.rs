@@ -64,17 +64,7 @@ impl<F: FieldExt<Repr = [u8; 32]>> FriVerifier<F> {
             domain_reduced = domain_unique;
         }
 
-        println!("domain_reduced {:?}", domain_reduced);
-
         let interpolant = UniPoly::interpolate(&domain_reduced, &final_codeword);
-
-        /*
-        let eval1 = interpolant.eval(domain_reduced[0]);
-        let eval2 = interpolant.eval(domain_reduced[1]);
-        println!("eval1 {:?}", eval1);
-        println!("eval1 {:?}", eval2);
-        println!("exected evals {:?}", final_codeword);
-         */
 
         let degree = if final_codeword.len() == 1 {
             0
@@ -82,14 +72,9 @@ impl<F: FieldExt<Repr = [u8; 32]>> FriVerifier<F> {
             final_codeword.len() / self.expansion_factor
         };
 
-        println!("degree {}", degree);
-        println!("interpolant.degree() {}", interpolant.degree());
         assert!(interpolant.degree() == degree);
 
         let domain_length = self.domain.len();
-
-        println!("domain_length {}", domain_length);
-        println!("proof.queries {}", proof.queries.len());
 
         let mut indices = sample_indices(
             self.num_colinearity_checks,
@@ -134,9 +119,7 @@ impl<F: FieldExt<Repr = [u8; 32]>> FriVerifier<F> {
                 assert!(c_y == coeff * c_x + intercept);
 
                 // Check Merkle proofs
-                println!("Checking Merkle proofs {:?}", a.siblings.len());
-                println!("Checking Merkle proofs {:?}", b.siblings.len());
-                println!("Checking Merkle proofs {:?}", c.siblings.len());
+
                 a.verify();
                 b.verify();
                 c.verify();
@@ -165,8 +148,6 @@ impl<F: FieldExt<Repr = [u8; 32]>> FriVerifier<F> {
                 }
             }
         }
-
-        println!("hash_count {}", hash_count);
     }
 
     pub fn verify_eval(&self, proof: FriProof<F>, com: F, eval: F) {

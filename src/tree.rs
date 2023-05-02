@@ -20,9 +20,6 @@ impl<F: FieldExt<Repr = [u8; 32]>> MerkleProof<F> {
             current_hash = hash_two(&[current_hash, *sibling]);
         }
 
-        println!("current_hash: {:?}", current_hash);
-        println!("current_hash == self.root: {:?}", current_hash == self.root);
-
         current_hash == self.root
     }
 }

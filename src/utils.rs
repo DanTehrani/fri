@@ -22,8 +22,6 @@ where
 
     bytes_8.resize(25, 0);
 
-    println!("bytes_8: {:?}", bytes_8.len());
-
     keccak::f1600(&mut bytes_8.as_slice().try_into().unwrap());
 
     let mut bytes = bytes_8[0..16]
