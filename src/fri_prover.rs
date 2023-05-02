@@ -1,68 +1,60 @@
-use std::marker::PhantomData;
-
-use crate::tree::Hasher;
-use crate::tree::{MerkleProof, MerkleTree};
+use crate::fft::fft;
+use crate::tree::MerkleTree;
+use crate::unipoly::UniPoly;
 use crate::utils::sample_indices;
+use crate::{FriProof, LayerProof};
+use ff::PrimeField;
 use merlin::Transcript;
-use pasta_curves::{arithmetic::FieldExt, group::ff::PrimeField};
+use pasta_curves::arithmetic::FieldExt;
 
-pub struct FRIProver<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> {
+pub struct FriProver<F: PrimeField> {
     domain: Vec<F>,
-    domain_length: usize,
-    expansion_factor: usize, // (i.e. expansion factor) (info bits) / (total bits)
+    // Number of colinearity checks per round
     num_colinearity_checks: usize,
-    omega: F,
-    _marker: PhantomData<H>,
 }
 
-#[derive(Debug)]
-pub struct FRIProof<F: PrimeField<Repr = [u8; 32]> + FieldExt> {
-    pub reduced_codeword: Vec<F>,
-    pub queries: Vec<LayerProof<F>>,
-}
+impl<F> FriProver<F>
+where
+    F: FieldExt<Repr = [u8; 32]>,
+{
+    pub fn new(max_degree: usize) -> Self {
+        // TODO: Allow arbitrary degree
+        assert!(max_degree.is_power_of_two());
 
-#[derive(Debug)]
-pub struct LayerProof<F: PrimeField<Repr = [u8; 32]> + FieldExt> {
-    pub openings: Vec<(MerkleProof<F>, MerkleProof<F>, MerkleProof<F>)>,
-}
+        // Are these params OK?
+        let expansion_factor = 2;
+        let num_colinearity_checks = 2;
 
-impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
-    fn construct(
-        omega: F,
-        domain_length: usize,
-        expansion_factor: usize,
-        num_colinearity_checks: usize,
-    ) -> Self {
-        let mut domain = vec![];
-        for i in 0..domain_length {
-            domain.push(omega.pow(&[i as u64, 0, 0, 0]));
-        }
+        let root_of_unity = F::root_of_unity();
+        let root_of_unity_log_2 = F::S;
 
+        let domain_order = (max_degree * expansion_factor).next_power_of_two();
+
+        // Generator for the subgroup with order _subgroup_order_ in the field
+        let domain_generator = root_of_unity.pow(&[
+            2u32.pow(32 - ((domain_order as f64).log2() as u32)) as u64,
+            0,
+            0,
+            0,
+        ]);
+
+        let domain = (0..domain_order)
+            .map(|i| domain_generator.pow(&[i as u64, 0, 0, 0]))
+            .collect();
+
+        // Compute the domain generator from the root of unity
         Self {
             domain,
-            domain_length,
-            expansion_factor,
             num_colinearity_checks,
-            omega,
-            _marker: PhantomData,
         }
     }
 
     fn num_rounds(&self) -> usize {
-        // TODO: Enable num_colinearity_check and rounds configuration
-        /*
-        let mut colinearity_checks_count = 0;
-        let mut n_rounds = 0;
-        while (4 * colinearity_checks_count) < self.domain_length {
-            colinearity_checks_count += self.num_colinearity_checks;
-            n_rounds += 1;
-        }
-         */
-        // TODO Choose a secure num_rounds!
-        ((self.domain_length as f64).log2() as usize) - 3 // this `3` is just random
+        let domain_order = self.domain.len();
+        ((domain_order as f64).log2() as usize) - 3 // this `3` is just random
     }
 
-    fn fold(&self, codeword: Vec<F>, domain: Vec<F>, alpha: F) -> Vec<F> {
+    fn fold(&self, codeword: &[F], domain: &[F], alpha: F) -> Vec<F> {
         assert!(codeword.len() == domain.len());
         let two_inv = F::from(2).invert().unwrap();
         let one = F::from(1);
@@ -89,22 +81,19 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
 
     fn commit(
         &self,
-        codeword: Vec<F>,
+        codeword: &[F],
         transcript: &mut Transcript,
-    ) -> (Vec<Vec<F>>, Vec<MerkleTree<F, H>>) {
-        // Commit to the codeword
-        let hasher = H::new();
-
+    ) -> (Vec<Vec<F>>, Vec<MerkleTree<F>>) {
         let mut domain = self.domain.clone();
 
-        let mut codewords = vec![codeword.clone()];
+        let mut codewords = vec![codeword.to_vec()];
         let mut trees = vec![];
 
         for i in 0..self.num_rounds() {
             let current_codeword = codewords[i].clone();
 
-            let mut tree = MerkleTree::new(hasher.clone());
-            let root = tree.commit(current_codeword.clone());
+            let mut tree = MerkleTree::new();
+            let root = tree.commit(&current_codeword);
 
             transcript.append_message(b"root", &root.to_repr());
             trees.push(tree);
@@ -113,7 +102,7 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
             transcript.challenge_bytes(b"alpha", &mut alpha);
             let alpha = F::from_bytes_wide(&alpha);
 
-            let next_codeword = self.fold(current_codeword, domain.to_vec(), alpha);
+            let next_codeword = self.fold(&current_codeword, &domain, alpha);
             let mut domain_unique = vec![];
             domain.iter().map(|x| x.square()).for_each(|x| {
                 if !domain_unique.contains(&x) {
@@ -122,7 +111,7 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
             });
             domain = domain_unique;
 
-            codewords.push(next_codeword)
+            codewords.push(next_codeword.to_vec())
         }
 
         (codewords, trees)
@@ -130,16 +119,16 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
 
     fn query(
         &self,
-        codewords: Vec<Vec<F>>,
-        trees: Vec<MerkleTree<F, H>>,
-        indices: Vec<usize>,
+        codewords: &[Vec<F>],
+        trees: &[MerkleTree<F>],
+        indices: &[usize],
     ) -> Vec<LayerProof<F>> {
         // A domain: w^i
         // B domain: w^{n/2 + i}
         // C domain: w^{2i}
 
         assert!(indices.len() == self.num_colinearity_checks);
-        let mut indices = indices;
+        let mut indices = indices.to_vec();
 
         let mut queries = vec![];
 
@@ -187,111 +176,28 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FRIProver<F, H> {
         queries
     }
 
-    fn prove(&self, codeword: Vec<F>) -> FRIProof<F> {
-        let mut transcript =
-            Transcript::new(b"Fast Reed-Solomon Interactive Oracle Proof of Proximity");
+    pub fn prove_degree(&self, poly: &UniPoly<F>, transcript: &mut Transcript) -> FriProof<F> {
+        assert!(poly.degree().is_power_of_two());
 
-        let (codewords, trees) = self.commit(codeword, &mut transcript);
+        let mut coeffs_expanded: Vec<F> = poly.coeffs.clone();
+        coeffs_expanded.resize(self.domain.len(), F::zero());
+
+        let codewords = fft(&coeffs_expanded, &self.domain);
+
+        let (codewords, trees) = self.commit(&codewords, transcript);
 
         let indices = sample_indices(
             self.num_colinearity_checks,
             codewords[0].len(),                   // Length of the initial codeword
             codewords[codewords.len() - 2].len(), // Length of the reduced codeword
-            &mut transcript,
+            transcript,
         );
 
-        let queries = self.query(codewords.clone(), trees, indices);
+        let queries = self.query(&codewords, &trees, &indices);
 
-        FRIProof {
+        FriProof {
             reduced_codeword: codewords[codewords.len() - 1].clone(),
             queries,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::fft::fft;
-    use crate::fri_verifier::FriVerifier;
-    use crate::unipoly::UniPoly;
-    use pasta_curves::group::ff::PrimeField;
-    use pasta_curves::Fp;
-
-    #[derive(Clone)]
-    struct PoseidonHasher {}
-
-    impl Hasher<Fp> for PoseidonHasher {
-        fn new() -> Self {
-            Self {}
-        }
-
-        fn hash(&self, inputs: Vec<Fp>) -> Fp {
-            // TODO: Use the actual Poseidon hash!
-            inputs[0] + inputs[1] + Fp::one()
-        }
-    }
-
-    #[test]
-    fn test_prove() {
-        let poly_degree = 1024;
-
-        let mut coeffs = vec![];
-        for i in 0..(poly_degree + 1) {
-            coeffs.push(Fp::from(i as u64));
-        }
-
-        let poly = UniPoly::new(coeffs);
-
-        let root_of_unity = Fp::root_of_unity();
-
-        let expansion_factor = 2;
-        let num_colinearity_checks = 2;
-
-        let subgroup_order = (poly.degree() * expansion_factor).next_power_of_two();
-
-        // Generator for the subgroup with order _subgroup_order_ in the field
-        let omega = root_of_unity.pow(&[
-            2u32.pow(32 - ((subgroup_order as f64).log2() as u32)) as u64,
-            0,
-            0,
-            0,
-        ]);
-
-        let mut domain = vec![];
-        for i in 0..subgroup_order {
-            domain.push(omega.pow(&[i as u64, 0, 0, 0]));
-        }
-
-        let mut coeffs_expanded = poly.coeffs.clone();
-        coeffs_expanded.resize(domain.len(), Fp::zero());
-
-        let evals = fft(coeffs_expanded, domain.clone());
-
-        let prover = FRIProver::<Fp, PoseidonHasher>::construct(
-            omega,
-            subgroup_order,
-            expansion_factor,
-            num_colinearity_checks,
-        );
-
-        println!("d {:?}", poly.degree());
-        println!("domain_len {}", subgroup_order);
-        println!("rounds {}", prover.num_rounds());
-
-        let proof = prover.prove(evals);
-
-        // C of the first round is the polynomial we're committing to.
-        let poly_commitment = proof.queries[0].openings[0].2.root;
-
-        let verifier = FriVerifier::<Fp, PoseidonHasher>::construct(
-            omega,
-            subgroup_order,
-            expansion_factor,
-            num_colinearity_checks,
-        );
-
-        let hasher = PoseidonHasher::new();
-        verifier.verify(proof, hasher, poly_commitment);
     }
 }

@@ -1,1 +1,0 @@
-sage ./sage/generate_params_poseidon.sage 1 0 256 3 5 128 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f

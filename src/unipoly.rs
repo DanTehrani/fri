@@ -1,12 +1,20 @@
-use crate::fft::ifft;
+use crate::fft::{fft, ifft};
 use pasta_curves::arithmetic::FieldExt;
 use pasta_curves::group::ff::PrimeField;
+use std::ops::Div;
+use std::process::Output;
 
-pub struct UniPoly<F: PrimeField<Repr = [u8; 32]> + FieldExt> {
+pub struct UniPoly<F>
+where
+    F: FieldExt<Repr = [u8; 32]>,
+{
     pub coeffs: Vec<F>,
 }
 
-impl<F: PrimeField<Repr = [u8; 32]> + FieldExt> UniPoly<F> {
+impl<F> UniPoly<F>
+where
+    F: FieldExt<Repr = [u8; 32]>,
+{
     pub fn new(coeffs: Vec<F>) -> Self {
         Self { coeffs } // [x^0, x^1, x^2, x^3...]
     }
@@ -24,9 +32,9 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt> UniPoly<F> {
         result
     }
 
-    pub fn interpolate(domain: Vec<F>, evals: Vec<F>) -> Self {
+    pub fn interpolate(domain: &[F], evals: &[F]) -> Self {
         assert!(domain.len() == evals.len());
-        let coeffs = ifft(domain, evals);
+        let coeffs = ifft(&domain, &evals);
         let mut degree = 0;
 
         for i in 0..coeffs.len() {
@@ -40,6 +48,16 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt> UniPoly<F> {
         }
     }
 }
+
+/*
+impl<F: FieldExt<Repr = [> ; 32]>> Div for UniPoly<F {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        let evals = fft(domain, self.coeffs.clone());
+    }
+}
+ */
 
 #[cfg(test)]
 mod tests {
@@ -82,7 +100,7 @@ mod tests {
             evals.push(poly.eval(*val));
         }
 
-        let interpolant = UniPoly::interpolate(domain.clone(), evals);
+        let interpolant = UniPoly::interpolate(&domain, &evals);
 
         assert!(interpolant.coeffs == poly.coeffs);
         assert!(interpolant.degree() == poly.degree());

@@ -1,43 +1,52 @@
 use std::marker::PhantomData;
 
-use crate::fri_prover::FRIProof;
-use crate::tree::Hasher;
 use crate::unipoly::UniPoly;
 use crate::utils::sample_indices;
+use crate::FriProof;
 use merlin::Transcript;
 use pasta_curves::arithmetic::FieldExt;
 use pasta_curves::group::ff::PrimeField;
 
-pub struct FriVerifier<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> {
+pub struct FriVerifier<F: PrimeField<Repr = [u8; 32]> + FieldExt> {
     domain: Vec<F>,
     expansion_factor: usize, // (i.e. expansion factor) (info bits) / (total bits)
-    domain_length: usize,
     num_colinearity_checks: usize,
-    _marker: PhantomData<H>,
 }
 
-impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> {
-    pub fn construct(
-        omega: F,
-        domain_length: usize,
-        expansion_factor: usize,
-        num_colinearity_checks: usize,
-    ) -> Self {
-        let mut domain = vec![];
-        for i in 0..domain_length {
-            domain.push(omega.pow(&[i as u64, 0, 0, 0]));
-        }
+impl<F: FieldExt<Repr = [u8; 32]>> FriVerifier<F> {
+    pub fn new(max_degree: usize) -> Self {
+        // TODO: Allow arbitrary degree
+        assert!(max_degree.is_power_of_two());
+
+        // Are these params OK?
+        let expansion_factor = 2;
+        let num_colinearity_checks = 2;
+
+        let root_of_unity = F::root_of_unity();
+        let root_of_unity_log_2 = F::S;
+
+        let domain_order = (max_degree * expansion_factor).next_power_of_two();
+
+        // Generator for the subgroup with order _subgroup_order_ in the field
+        let domain_generator = root_of_unity.pow(&[
+            2u32.pow(32 - ((domain_order as f64).log2() as u32)) as u64,
+            0,
+            0,
+            0,
+        ]);
+
+        let domain = (0..domain_order)
+            .map(|i| domain_generator.pow(&[i as u64, 0, 0, 0]))
+            .collect();
 
         Self {
             domain,
-            domain_length,
             expansion_factor,
             num_colinearity_checks,
-            _marker: PhantomData,
         }
     }
 
-    pub fn verify(&self, proof: FRIProof<F>, hasher: H, com: F) {
+    pub fn verify(&self, proof: FriProof<F>, com: F) {
         let mut transcript =
             Transcript::new(b"Fast Reed-Solomon Interactive Oracle Proof of Proximity");
 
@@ -55,7 +64,9 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> 
             domain_reduced = domain_unique;
         }
 
-        let interpolant = UniPoly::interpolate(domain_reduced.clone(), final_codeword.clone());
+        println!("domain_reduced {:?}", domain_reduced);
+
+        let interpolant = UniPoly::interpolate(&domain_reduced, &final_codeword);
 
         /*
         let eval1 = interpolant.eval(domain_reduced[0]);
@@ -75,13 +86,19 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> 
         println!("interpolant.degree() {}", interpolant.degree());
         assert!(interpolant.degree() == degree);
 
+        let domain_length = self.domain.len();
+
+        println!("domain_length {}", domain_length);
+        println!("proof.queries {}", proof.queries.len());
+
         let mut indices = sample_indices(
             self.num_colinearity_checks,
-            self.domain_length,
-            self.domain_length / 2usize.pow(proof.queries.len() as u32),
+            domain_length,
+            domain_length / 2usize.pow(proof.queries.len() as u32),
             &mut transcript,
         );
 
+        let mut hash_count = 0;
         for (i, layer) in proof.queries.iter().enumerate() {
             assert!(
                 layer.openings.len() == self.num_colinearity_checks,
@@ -91,13 +108,13 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> 
             // Halve the range of the indices
             indices = indices
                 .iter()
-                .map(|index| index % (self.domain_length / 2 >> (i + 1)))
+                .map(|index| index % (domain_length / 2 >> (i + 1)))
                 .collect::<Vec<usize>>();
 
             let a_indices = indices.clone();
             let b_indices = indices
                 .iter()
-                .map(|index| (self.domain_length / 2 >> (i + 1)) + index)
+                .map(|index| (domain_length / 2 >> (i + 1)) + index)
                 .collect::<Vec<usize>>();
             let c_indices = indices.clone();
 
@@ -117,9 +134,13 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> 
                 assert!(c_y == coeff * c_x + intercept);
 
                 // Check Merkle proofs
-                a.verify(&hasher);
-                b.verify(&hasher);
-                c.verify(&hasher);
+                println!("Checking Merkle proofs {:?}", a.siblings.len());
+                println!("Checking Merkle proofs {:?}", b.siblings.len());
+                println!("Checking Merkle proofs {:?}", c.siblings.len());
+                a.verify();
+                b.verify();
+                c.verify();
+                hash_count += a.siblings.len() + b.siblings.len() + c.siblings.len();
 
                 // Check that the root is correct
                 assert_eq!(
@@ -144,5 +165,20 @@ impl<F: PrimeField<Repr = [u8; 32]> + FieldExt, H: Hasher<F>> FriVerifier<F, H> 
                 }
             }
         }
+
+        println!("hash_count {}", hash_count);
+    }
+
+    pub fn verify_eval(&self, proof: FriProof<F>, com: F, eval: F) {
+        let comm = proof.reduced_codeword[0];
+        // Compute the code word of the quotient polynomial.
+        // Let the prover provide it.
+
+        // Given the evaluation point and the claimed evaluation, the verifier can calculate
+        // codeword of the quotient polynomial?
+
+        // If not compute the codeword of the quotient polynomial,
+        // given the evaluation of $f(gamma) = y$, we can compute the evaluation of the polynomial
+        // at that point (gamma - z)
     }
 }

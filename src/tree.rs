@@ -1,40 +1,35 @@
-use ff::PrimeField;
-use std::cmp::max;
+use crate::utils::hash_two;
+use ff::Field;
+use pasta_curves::arithmetic::FieldExt;
 
-pub trait Hasher<F: PrimeField>: Clone {
-    fn new() -> Self;
-    fn hash(&self, input: Vec<F>) -> F;
-}
-
-pub struct MerkleTree<F: PrimeField, H: Hasher<F>> {
+pub struct MerkleTree<F: FieldExt<Repr = [u8; 32]>> {
     pub layers: Vec<Vec<F>>, // to root
-    hasher: H,
 }
 
 #[derive(Debug)]
-pub struct MerkleProof<F: PrimeField> {
+pub struct MerkleProof<F: FieldExt<Repr = [u8; 32]>> {
     pub root: F,
     pub leaf: F,
     pub siblings: Vec<F>,
 }
 
-impl<F: PrimeField> MerkleProof<F> {
-    pub fn verify(&self, hasher: &impl Hasher<F>) -> bool {
+impl<F: FieldExt<Repr = [u8; 32]>> MerkleProof<F> {
+    pub fn verify(&self) -> bool {
         let mut current_hash = self.leaf;
         for sibling in &self.siblings {
-            current_hash = hasher.hash(vec![current_hash, *sibling]);
+            current_hash = hash_two(&[current_hash, *sibling]);
         }
+
+        println!("current_hash: {:?}", current_hash);
+        println!("current_hash == self.root: {:?}", current_hash == self.root);
 
         current_hash == self.root
     }
 }
 
-impl<F: PrimeField, H: Hasher<F>> MerkleTree<F, H> {
-    pub fn new(hasher: H) -> Self {
-        Self {
-            layers: vec![],
-            hasher,
-        }
+impl<F: FieldExt<Repr = [u8; 32]>> MerkleTree<F> {
+    pub fn new() -> Self {
+        Self { layers: vec![] }
     }
 
     fn compute_layers(&mut self, leaves: Vec<F>) -> Vec<F> {
@@ -48,31 +43,27 @@ impl<F: PrimeField, H: Hasher<F>> MerkleTree<F, H> {
         for i in (0..leaves.len()).step_by(2) {
             if leaves.len() - 1 == i {
                 // Sibling.
-                let parent = self.hasher.hash(vec![leaves[i], leaves[i]]);
+                let parent = hash_two(&[leaves[i], leaves[i]]);
                 parent_nodes.push(parent);
             } else {
                 let left = leaves[i];
                 let right = leaves[i + 1];
-                let parent = self.hasher.hash(vec![left, right]);
+                let parent = hash_two(&[left, right]);
                 parent_nodes.push(parent);
             }
         }
         self.compute_layers(parent_nodes)
     }
 
-    pub fn commit(&mut self, leaves: Vec<F>) -> F {
+    pub fn commit(&mut self, leaves: &[F]) -> F {
         let n = leaves.len();
-        assert!(n & (n - 1) == 0);
+        assert!(n.is_power_of_two());
 
-        let mut leaves = {
-            if leaves.len() % 2 == 0 {
-                leaves
-            } else {
-                let mut leaves = leaves;
-                leaves.push(F::zero());
-                leaves
-            }
-        };
+        // Add a dummy leaf if the number of leaves is odd.
+        let mut leaves = leaves.to_vec();
+        if n % 2 == 1 {
+            leaves.push(F::zero());
+        }
 
         self.layers.push(leaves.clone());
 
@@ -81,7 +72,7 @@ impl<F: PrimeField, H: Hasher<F>> MerkleTree<F, H> {
             for i in (0..leaves.len()).step_by(2) {
                 let left = leaves[i];
                 let right = leaves[i + 1];
-                let parent = self.hasher.hash(vec![left, right]);
+                let parent = hash_two(&[left, right]);
                 layer.push(parent);
             }
             self.layers.push(layer.clone());
@@ -107,7 +98,7 @@ impl<F: PrimeField, H: Hasher<F>> MerkleTree<F, H> {
             } else {
                 let current_index = sibling_indices[i - 1] / 2;
                 sibling_indices.push(if current_index % 2 == 0 {
-                    if (current_index == self.layers[i].len() - 1) {
+                    if current_index == self.layers[i].len() - 1 {
                         current_index
                     } else {
                         current_index + 1
@@ -135,23 +126,9 @@ mod tests {
     use super::*;
     use pasta_curves::Fp;
 
-    #[derive(Clone)]
-    struct PoseidonHasher {}
-
-    impl Hasher<Fp> for PoseidonHasher {
-        fn new() -> Self {
-            Self {}
-        }
-
-        fn hash(&self, inputs: Vec<Fp>) -> Fp {
-            inputs[0] + inputs[1]
-        }
-    }
-
     #[test]
     fn test_tree() {
-        let hasher = PoseidonHasher::new();
-        let mut tree = MerkleTree::new(hasher.clone());
+        let mut tree = MerkleTree::new();
         let leaves = vec![
             Fp::from(1),
             Fp::from(2),
@@ -159,11 +136,14 @@ mod tests {
             Fp::from(4),
             Fp::from(5),
             Fp::from(6),
+            Fp::from(7),
+            Fp::from(8),
         ];
-        let root = tree.commit(leaves.clone());
+        tree.commit(&leaves);
+
         for i in 0..leaves.len() {
             let proof = tree.open(leaves[i]);
-            assert!(proof.verify(&hasher));
+            assert!(proof.verify());
         }
     }
 }

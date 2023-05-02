@@ -1,25 +1,30 @@
 use pasta_curves::{arithmetic::FieldExt, group::ff::PrimeField};
 use std::vec;
 
-pub fn fft<F: PrimeField<Repr = [u8; 32]> + FieldExt>(coeffs: Vec<F>, domain: Vec<F>) -> Vec<F> {
+pub fn fft<F>(coeffs: &[F], domain: &[F]) -> Vec<F>
+where
+    F: FieldExt<Repr = [u8; 32]>,
+{
     assert!(coeffs.len() == domain.len());
     if coeffs.len() == 1 {
-        return coeffs;
+        return coeffs.to_vec();
     }
 
+    // TODO: Just borrow the values
     // Split into evens and odds
     let L = coeffs
         .iter()
         .enumerate()
         .filter(|(i, _)| i % 2 == 0)
         .map(|(_, x)| *x)
-        .collect();
+        .collect::<Vec<F>>();
+
     let R = coeffs
         .iter()
         .enumerate()
         .filter(|(i, _)| i % 2 == 1)
         .map(|(_, x)| *x)
-        .collect();
+        .collect::<Vec<F>>();
 
     // Square the domain values
     /*
@@ -38,8 +43,8 @@ pub fn fft<F: PrimeField<Repr = [u8; 32]> + FieldExt>(coeffs: Vec<F>, domain: Ve
         }
     });
 
-    let fft_e = fft(L, domain_squared.clone());
-    let fft_o = fft(R, domain_squared.clone());
+    let fft_e = fft(&L, &domain_squared);
+    let fft_o = fft(&R, &domain_squared);
 
     let mut evals_L = vec![];
     let mut evals_R = vec![];
@@ -54,10 +59,10 @@ pub fn fft<F: PrimeField<Repr = [u8; 32]> + FieldExt>(coeffs: Vec<F>, domain: Ve
     return evals_L;
 }
 
-pub fn ifft<F: PrimeField<Repr = [u8; 32]> + FieldExt>(domain: Vec<F>, evals: Vec<F>) -> Vec<F> {
+pub fn ifft<F: PrimeField<Repr = [u8; 32]> + FieldExt>(domain: &[F], evals: &[F]) -> Vec<F> {
     let mut coeffs = vec![];
     let len_mod_inv = F::from(domain.len() as u64).invert().unwrap();
-    let vals = fft(evals, domain);
+    let vals = fft(&evals, &domain);
 
     coeffs.push(vals[0] * len_mod_inv);
     for val in vals[1..].iter().rev() {
@@ -116,11 +121,11 @@ mod tests {
             expected_evals.push(eval);
         }
 
-        let evals = fft(coeffs.clone(), domain.clone());
+        let evals = fft(&coeffs, &domain);
         println!("Evals: {:?}", evals);
         assert!(evals == expected_evals);
 
-        let recovered_coeffs = ifft(domain, evals);
+        let recovered_coeffs = ifft(&domain, &evals);
         println!("Recovered Coeffs: {:?}", recovered_coeffs);
         assert!(recovered_coeffs == coeffs);
     }
